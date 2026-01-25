@@ -10,10 +10,12 @@ sys.path.append(project_root)
 sys.path.append(os.path.dirname(current_dir))
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QIcon
 from src.ui.window import MainWindow
 
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon("src/assets/icon.png"))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

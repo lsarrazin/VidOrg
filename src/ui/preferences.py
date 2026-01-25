@@ -8,7 +8,7 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle("Preferences")
         self.resize(600, 400)
         
-        self.settings = QSettings("MyCompany", "VideoSorter")
+        self.settings = QSettings("org.fr.laurent", "VidOrg")
         
         main_layout = QVBoxLayout(self)
         

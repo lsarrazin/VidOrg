@@ -1,9 +1,9 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
                              QSplitter, QTreeView, QListView, QLabel, QFrame,
                              QFileDialog, QPushButton, QMessageBox, QComboBox,
-                             QSlider, QStyle, QSizePolicy, QStyle)
+                             QSlider, QStyle, QSizePolicy, QMenu, QInputDialog, QLineEdit)
 from PyQt6.QtCore import Qt, QDir, QUrl, QSettings
-from PyQt6.QtGui import QAction, QFileSystemModel, QStandardItemModel, QStandardItem
+from PyQt6.QtGui import QAction, QFileSystemModel, QStandardItemModel, QStandardItem, QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 import shutil
@@ -11,13 +11,16 @@ import shutil
 import os
 from src.ui.preferences import PreferencesDialog
 from src.ui.widgets import CustomVideoWidget, ClickableSlider
+from src.ui.conflicts import ConflictDialog
+from src.core.video_utils import VideoUtils
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Video Sorter")
+        self.setWindowTitle("VidOrg - Video Organizer")
+        self.setWindowIcon(QIcon("src/assets/icon.png"))
         self.resize(1200, 800)
-        self.settings = QSettings("MyCompany", "VideoSorter")
+        self.settings = QSettings("org.fr.laurent", "VidOrg")
         self.setup_ui()
         self.setup_menu()
         self.load_preferences()
@@ -72,6 +75,15 @@ class MainWindow(QMainWindow):
         self.source_combo = QComboBox()
         self.source_combo.currentIndexChanged.connect(self.on_source_combo_changed)
         source_layout.addWidget(self.source_combo)
+
+        # Sorting Controls
+        sort_layout = QHBoxLayout()
+        sort_layout.addWidget(QLabel("Sort:"))
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Name (A-Z)", "Date (Newest)", "Size (Largest)"])
+        self.sort_combo.currentIndexChanged.connect(self.on_sort_changed)
+        sort_layout.addWidget(self.sort_combo)
+        source_layout.addLayout(sort_layout)
         
         # File System Model
         self.file_model = QFileSystemModel()
@@ -81,7 +93,10 @@ class MainWindow(QMainWindow):
         
         self.source_tree = QTreeView()
         self.source_tree.setModel(self.file_model)
+        self.source_tree.setSortingEnabled(True)
         self.source_tree.setRootIndex(self.file_model.index(QDir.homePath()))
+        self.source_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.source_tree.customContextMenuRequested.connect(lambda pos: self.show_context_menu(pos, self.source_tree, self.file_model))
         
         # Hide internal columns (Size, Type, Date..) - keep Name
         for i in range(1, 4):
@@ -136,11 +151,6 @@ class MainWindow(QMainWindow):
         self.btn_prev.clicked.connect(self.play_previous_video)
         controls_layout.addWidget(self.btn_prev)
         
-        # Backward 1 min
-        self.btn_back_1m = QPushButton("-1m")
-        self.btn_back_1m.clicked.connect(lambda: self.seek_relative(-60000))
-        controls_layout.addWidget(self.btn_back_1m)
-        
         # Play/Pause
         self.btn_play = QPushButton()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
@@ -154,11 +164,6 @@ class MainWindow(QMainWindow):
         self.btn_stop.setToolTip("Stop")
         self.btn_stop.clicked.connect(self.stop_video)
         controls_layout.addWidget(self.btn_stop)
-        
-        # Forward 1 min
-        self.btn_fwd_1m = QPushButton("+1m")
-        self.btn_fwd_1m.clicked.connect(lambda: self.seek_relative(60000))
-        controls_layout.addWidget(self.btn_fwd_1m)
         
         # Next
         self.btn_next = QPushButton()
@@ -204,16 +209,42 @@ class MainWindow(QMainWindow):
         self.dest_file_model = QFileSystemModel()
         self.dest_file_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
         
+        # Vertical Splitter for Folders vs Files
+        self.dest_splitter = QSplitter(Qt.Orientation.Vertical)
+        dest_layout.addWidget(self.dest_splitter)
+        
+        # 1. Folder Tree
         self.dest_tree = QTreeView()
         self.dest_tree.setModel(self.dest_file_model)
         for i in range(1, 4):
             self.dest_tree.setColumnHidden(i, True)
-        dest_layout.addWidget(self.dest_tree)
+        self.dest_tree.clicked.connect(self.on_dest_tree_clicked)
+        self.dest_splitter.addWidget(self.dest_tree)
+
+        # 2. File List (Show files in selected folder)
+        self.dest_files_model = QFileSystemModel()
+        self.dest_files_model.setFilter(QDir.Filter.Files)
         
-        # Add Dest Button
-        self.btn_add_dest = QPushButton("Add Folder")
+        self.dest_files_view = QListView()
+        self.dest_files_view.setModel(self.dest_files_model)
+        self.dest_files_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.dest_files_view.customContextMenuRequested.connect(lambda pos: self.show_context_menu(pos, self.dest_files_view, self.dest_files_model))
+        self.dest_splitter.addWidget(self.dest_files_view)
+        
+        # Set initial splitter sizes
+        self.dest_splitter.setSizes([400, 200])
+        
+        # Management Buttons
+        dest_btns_layout = QHBoxLayout()
+        dest_layout.addLayout(dest_btns_layout)
+        
+        self.btn_add_dest = QPushButton("Add Root")
         self.btn_add_dest.clicked.connect(self.add_destination)
-        dest_layout.addWidget(self.btn_add_dest)
+        dest_btns_layout.addWidget(self.btn_add_dest)
+        
+        self.btn_new_folder = QPushButton("New Folder")
+        self.btn_new_folder.clicked.connect(self.create_new_folder)
+        dest_btns_layout.addWidget(self.btn_new_folder)
         
         # Move Button
         self.btn_move = QPushButton("Move Video")
@@ -274,6 +305,16 @@ class MainWindow(QMainWindow):
         folder = self.source_combo.currentText()
         if folder and os.path.isdir(folder):
             self.source_tree.setRootIndex(self.file_model.index(folder))
+            self.on_sort_changed() # Re-apply sort on change
+
+    def on_sort_changed(self):
+        idx = self.sort_combo.currentIndex()
+        if idx == 0: # Name (A-Z)
+            self.source_tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        elif idx == 1: # Date (Newest)
+            self.source_tree.sortByColumn(3, Qt.SortOrder.DescendingOrder)
+        elif idx == 2: # Size (Largest)
+            self.source_tree.sortByColumn(1, Qt.SortOrder.DescendingOrder)
 
     def on_file_selected(self, index):
         file_path = self.file_model.filePath(index)
@@ -289,12 +330,48 @@ class MainWindow(QMainWindow):
         if folder:
             self.dest_combo.addItem(folder)
             self.dest_combo.setCurrentText(folder)
+
+    def create_new_folder(self):
+        # 1. Determine target parent directory
+        dest_idx = self.dest_tree.currentIndex()
+        if dest_idx.isValid():
+            parent_dir = self.dest_file_model.filePath(dest_idx)
+        else:
+            parent_dir = self.dest_combo.currentText()
+            
+        if not parent_dir or not os.path.isdir(parent_dir):
+            QMessageBox.warning(self, "No Parent Directory", "Please select a destination folder first.")
+            return
+            
+        # 2. Ask for name
+        name, ok = QInputDialog.getText(self, "New Folder", f"Create sub-folder in:\n{os.path.basename(parent_dir)}", 
+                                        QLineEdit.EchoMode.Normal, "New Folder")
+        
+        if ok and name:
+            new_path = os.path.join(parent_dir, name)
+            try:
+                if os.path.exists(new_path):
+                    QMessageBox.warning(self, "Error", "A folder with this name already exists.")
+                    return
+                os.makedirs(new_path)
+                # Model should update automatically via QFileSystemModel's watcher
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create folder:\n{e}")
             
     def on_dest_combo_changed(self):
         folder = self.dest_combo.currentText()
         if folder and os.path.exists(folder):
             self.dest_file_model.setRootPath(folder)
             self.dest_tree.setRootIndex(self.dest_file_model.index(folder))
+            # Also sync the file list
+            self.dest_files_model.setRootPath(folder)
+            self.dest_files_view.setRootIndex(self.dest_files_model.index(folder))
+
+    def on_dest_tree_clicked(self, index):
+        folder_path = self.dest_file_model.filePath(index)
+        if os.path.isdir(folder_path):
+            self.dest_files_model.setRootPath(folder_path)
+            self.dest_files_view.setRootIndex(self.dest_files_model.index(folder_path))
 
     def move_current_video(self):
         # 1. Get current video
@@ -323,6 +400,18 @@ class MainWindow(QMainWindow):
         file_name = os.path.basename(file_path)
         target_path = os.path.join(dest_folder, file_name)
         
+        if os.path.exists(target_path):
+            dlg = ConflictDialog(file_path, dest_folder, self)
+            if dlg.exec():
+                if dlg.result_code == ConflictDialog.RENAME:
+                    target_path = os.path.join(dest_folder, dlg.final_filename)
+                elif dlg.result_code == ConflictDialog.OVERWRITE:
+                    pass # shutil.move will overwrite
+                else:
+                    return
+            else:
+                return
+
         # Save current position to restore selection (which effectively selects 'next' as items shift up)
         current_row = source_idx.row()
         parent_idx = source_idx.parent()
@@ -412,10 +501,6 @@ class MainWindow(QMainWindow):
         self.player.stop()
         self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
 
-    def seek_relative(self, delta_ms):
-        pos = self.player.position()
-        self.player.setPosition(pos + delta_ms)
-
     def set_volume(self, value):
         self.audio_output.setVolume(value / 100.0)
 
@@ -456,3 +541,59 @@ class MainWindow(QMainWindow):
         if idx and idx.isValid():
              self.source_tree.setCurrentIndex(idx)
              self.on_file_selected(idx)
+
+    # --- Context Menu Handlers ---
+
+    def show_context_menu(self, pos, view, model):
+        index = view.indexAt(pos)
+        if not index.isValid():
+            return
+            
+        file_path = model.filePath(index)
+        if not file_path or os.path.isdir(file_path):
+            return
+
+        menu = QMenu(self)
+        
+        act_info = menu.addAction("Information")
+        act_rename = menu.addAction("Rename")
+        act_delete = menu.addAction("Delete")
+        
+        action = menu.exec(view.mapToGlobal(pos))
+        
+        if action == act_info:
+            self.file_info(file_path)
+        elif action == act_rename:
+            self.file_rename(file_path)
+        elif action == act_delete:
+            self.file_delete(file_path)
+
+    def file_info(self, path):
+        metadata = VideoUtils.get_metadata(path)
+        text = ""
+        for key, val in metadata.items():
+            text += f"<b>{key}:</b> {val}<br>"
+            
+        QMessageBox.information(self, "Video Information", text)
+
+    def file_rename(self, path):
+        old_name = os.path.basename(path)
+        new_name, ok = QInputDialog.getText(self, "Rename File", "New filename:", QLineEdit.EchoMode.Normal, old_name)
+        
+        if ok and new_name and new_name != old_name:
+            new_path = os.path.join(os.path.dirname(path), new_name)
+            try:
+                os.rename(path, new_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Rename Error", str(e))
+
+    def file_delete(self, path):
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                     f"Are you sure you want to delete '{os.path.basename(path)}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                os.remove(path)
+            except Exception as e:
+                QMessageBox.critical(self, "Delete Error", str(e))

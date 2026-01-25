@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
                              QSplitter, QTreeView, QListView, QLabel, QFrame,
                              QFileDialog, QPushButton, QMessageBox, QComboBox,
-                             QSlider, QStyle, QSizePolicy)
+                             QSlider, QStyle, QSizePolicy, QStyle)
 from PyQt6.QtCore import Qt, QDir, QUrl, QSettings
 from PyQt6.QtGui import QAction, QFileSystemModel, QStandardItemModel, QStandardItem
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -10,7 +10,7 @@ import shutil
 import shutil
 import os
 from src.ui.preferences import PreferencesDialog
-from src.ui.widgets import CustomVideoWidget
+from src.ui.widgets import CustomVideoWidget, ClickableSlider
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -104,11 +104,26 @@ class MainWindow(QMainWindow):
         player_layout = QVBoxLayout(self.player_panel)
         player_layout.addWidget(QLabel("Video Player"))
         
-        # Video Widget
         self.video_widget = CustomVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_widget.doubleClicked.connect(self.toggle_fullscreen)
         player_layout.addWidget(self.video_widget)
+        
+        # --- Seeker Layout ---
+        seeker_layout = QHBoxLayout()
+        player_layout.addLayout(seeker_layout)
+        
+        self.label_elapsed = QLabel("00:00")
+        seeker_layout.addWidget(self.label_elapsed)
+        
+        self.slider_position = ClickableSlider(Qt.Orientation.Horizontal)
+        self.slider_position.setRange(0, 0)
+        self.slider_position.sliderMoved.connect(self.seek_video)
+        seeker_layout.addWidget(self.slider_position)
+        
+        self.label_duration = QLabel("00:00")
+        seeker_layout.addWidget(self.label_duration)
         
         # --- Controls Layout ---
         controls_layout = QHBoxLayout()
@@ -157,7 +172,7 @@ class MainWindow(QMainWindow):
         
         # Volume
         controls_layout.addWidget(QLabel("Vol:"))
-        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(100)
         self.volume_slider.setFixedWidth(100)
@@ -169,6 +184,10 @@ class MainWindow(QMainWindow):
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
         self.player.setVideoOutput(self.video_widget)
+        
+        # Signals for seeker
+        self.player.positionChanged.connect(self.update_position)
+        self.player.durationChanged.connect(self.update_duration)
         
         # --- Right Panel: Destination ---
         self.dest_panel = QFrame()
@@ -209,6 +228,41 @@ class MainWindow(QMainWindow):
         # Set initial sizes (20%, 60%, 20%)
         self.splitter.setSizes([240, 720, 240])
         
+    # --- Playback Logic ---
+
+    def format_time(self, ms):
+        seconds = (ms // 1000) % 60
+        minutes = (ms // (1000 * 60)) % 60
+        hours = (ms // (1000 * 60 * 60))
+        if hours > 0:
+            return f"{hours:02}:{minutes:02}:{seconds:02}"
+        return f"{minutes:02}:{seconds:02}"
+
+    def update_position(self, ms):
+        self.slider_position.blockSignals(True)
+        self.slider_position.setValue(ms)
+        self.slider_position.blockSignals(False)
+        self.label_elapsed.setText(self.format_time(ms))
+
+    def update_duration(self, ms):
+        self.slider_position.setRange(0, ms)
+        self.label_duration.setText(self.format_time(ms))
+
+    def seek_video(self, ms):
+        self.player.setPosition(ms)
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self.source_panel.show()
+            self.dest_panel.show()
+            self.menuBar().show()
+        else:
+            self.showFullScreen()
+            self.source_panel.hide()
+            self.dest_panel.hide()
+            self.menuBar().hide()
+
     def browse_source_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Source Directory", QDir.homePath())
         if folder:

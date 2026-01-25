@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
-                             QPushButton, QFileDialog, QAbstractItemView)
+                             QPushButton, QFileDialog, QAbstractItemView, QStyle)
 from PyQt6.QtCore import Qt
 
 class PathListWidget(QWidget):
@@ -66,12 +66,44 @@ class PathListWidget(QWidget):
             self.list_widget.insertItem(curr + 1, item)
             self.list_widget.setCurrentRow(curr + 1)
 
+from PyQt6.QtWidgets import QSlider, QStyleOptionSlider
+from PyQt6.QtCore import Qt, pyqtSignal
+
+class ClickableSlider(QSlider):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Calculate the value based on the click position
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+            sr = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderGroove, self)
+            
+            if self.orientation() == Qt.Orientation.Horizontal:
+                slider_length = sr.width()
+                slider_pos = event.position().x() - sr.x()
+            else:
+                slider_length = sr.height()
+                slider_pos = event.position().y() - sr.y()
+                # For vertical sliders, the value is inverted (bottom is min)
+                slider_pos = slider_length - slider_pos
+
+            if slider_length > 0:
+                new_value = self.minimum() + int((self.maximum() - self.minimum()) * slider_pos / slider_length)
+                self.setValue(new_value)
+                # Emit sliderMoved to trigger video seek immediately
+                self.sliderMoved.emit(new_value)
+            
+            event.accept()
+        super().mousePressEvent(event)
+
 from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtCore import pyqtSignal
 
 class CustomVideoWidget(QVideoWidget):
+    doubleClicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         
     def mouseDoubleClickEvent(self, event):
-        self.setFullScreen(not self.isFullScreen())
-        event.accept()        
+        self.doubleClicked.emit()
+        event.accept()

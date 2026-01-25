@@ -304,6 +304,7 @@ class MainWindow(QMainWindow):
     def on_source_combo_changed(self):
         folder = self.source_combo.currentText()
         if folder and os.path.isdir(folder):
+            self.file_model.setRootPath(folder)
             self.source_tree.setRootIndex(self.file_model.index(folder))
             self.on_sort_changed() # Re-apply sort on change
 

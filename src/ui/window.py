@@ -69,7 +69,7 @@ class MainWindow(QMainWindow):
         self.source_panel = QFrame()
         self.source_panel.setFrameShape(QFrame.Shape.StyledPanel)
         source_layout = QVBoxLayout(self.source_panel)
-        source_layout.addWidget(QLabel("Source Folder"))
+        source_layout.addWidget(QLabel("Source"))
         
         # Source Selector (ComboBox)
         self.source_combo = QComboBox()
@@ -105,9 +105,6 @@ class MainWindow(QMainWindow):
         self.source_tree.clicked.connect(self.on_file_selected)
         source_layout.addWidget(self.source_tree)
         
-        self.source_tree.clicked.connect(self.on_file_selected)
-        source_layout.addWidget(self.source_tree)
-        
         # Button to change Root (Manual override)
         self.btn_change_source = QPushButton("Browse...")
         self.btn_change_source.clicked.connect(self.browse_source_folder)
@@ -117,7 +114,8 @@ class MainWindow(QMainWindow):
         self.player_panel = QFrame()
         self.player_panel.setFrameShape(QFrame.Shape.StyledPanel)
         player_layout = QVBoxLayout(self.player_panel)
-        player_layout.addWidget(QLabel("Video Player"))
+        self.player_label = QLabel("Video Player")
+        player_layout.addWidget(self.player_label)
         
         self.video_widget = CustomVideoWidget()
         self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
@@ -143,6 +141,14 @@ class MainWindow(QMainWindow):
         # --- Controls Layout ---
         controls_layout = QHBoxLayout()
         player_layout.addLayout(controls_layout)
+        
+        # Unarchive Button (Far left)
+        self.btn_unarchive = QPushButton("<< Unarchive")
+        self.btn_unarchive.clicked.connect(self.unarchive_video)
+        controls_layout.addWidget(self.btn_unarchive)
+        
+        # Centering stretch
+        controls_layout.addStretch()
         
         # Previous
         self.btn_prev = QPushButton()
@@ -172,17 +178,24 @@ class MainWindow(QMainWindow):
         self.btn_next.clicked.connect(self.play_next_video)
         controls_layout.addWidget(self.btn_next)
         
-        # Separator (Spacer)
-        controls_layout.addStretch()
-        
-        # Volume
-        controls_layout.addWidget(QLabel("Vol:"))
+        # Volume (Grouped with playback controls)
+        controls_layout.addSpacing(10)
+        self.vol_label = QLabel("Vol:")
+        controls_layout.addWidget(self.vol_label)
         self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(100)
-        self.volume_slider.setFixedWidth(100)
+        self.volume_slider.setFixedWidth(80)
         self.volume_slider.valueChanged.connect(self.set_volume)
         controls_layout.addWidget(self.volume_slider)
+        
+        # Centering stretch
+        controls_layout.addStretch()
+        
+        # Move Button (Far right)
+        self.btn_move = QPushButton("Archive >>")
+        self.btn_move.clicked.connect(self.move_current_video)
+        controls_layout.addWidget(self.btn_move)
         
         # Media Player
         self.player = QMediaPlayer()
@@ -198,7 +211,7 @@ class MainWindow(QMainWindow):
         self.dest_panel = QFrame()
         self.dest_panel.setFrameShape(QFrame.Shape.StyledPanel)
         dest_layout = QVBoxLayout(self.dest_panel)
-        dest_layout.addWidget(QLabel("Destinations"))
+        dest_layout.addWidget(QLabel("Destination"))
         
         # Destination Root Selector
         self.dest_combo = QComboBox()
@@ -224,9 +237,12 @@ class MainWindow(QMainWindow):
         # 2. File List (Show files in selected folder)
         self.dest_files_model = QFileSystemModel()
         self.dest_files_model.setFilter(QDir.Filter.Files)
+        self.dest_files_model.setNameFilters(["*.mp4", "*.mkv", "*.avi", "*.mov"])
+        self.dest_files_model.setNameFilterDisables(False)
         
         self.dest_files_view = QListView()
         self.dest_files_view.setModel(self.dest_files_model)
+        self.dest_files_view.clicked.connect(self.on_file_selected)
         self.dest_files_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.dest_files_view.customContextMenuRequested.connect(lambda pos: self.show_context_menu(pos, self.dest_files_view, self.dest_files_model))
         self.dest_splitter.addWidget(self.dest_files_view)
@@ -245,11 +261,6 @@ class MainWindow(QMainWindow):
         self.btn_new_folder = QPushButton("New Folder")
         self.btn_new_folder.clicked.connect(self.create_new_folder)
         dest_btns_layout.addWidget(self.btn_new_folder)
-        
-        # Move Button
-        self.btn_move = QPushButton("Move Video")
-        self.btn_move.clicked.connect(self.move_current_video)
-        dest_layout.addWidget(self.btn_move)
         
         # Add panels to splitter
         self.splitter.addWidget(self.source_panel)
@@ -288,11 +299,15 @@ class MainWindow(QMainWindow):
             self.source_panel.show()
             self.dest_panel.show()
             self.menuBar().show()
+            self.btn_move.show()
+            self.btn_unarchive.show()
         else:
             self.showFullScreen()
             self.source_panel.hide()
             self.dest_panel.hide()
             self.menuBar().hide()
+            self.btn_move.hide()
+            self.btn_unarchive.hide()
 
     def browse_source_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Source Directory", QDir.homePath())
@@ -318,11 +333,16 @@ class MainWindow(QMainWindow):
             self.source_tree.sortByColumn(1, Qt.SortOrder.DescendingOrder)
 
     def on_file_selected(self, index):
-        file_path = self.file_model.filePath(index)
-        if self.file_model.isDir(index):
+        model = index.model()
+        if not hasattr(model, 'filePath'):
+            return
+            
+        file_path = model.filePath(index)
+        if model.isDir(index):
             return
             
         print(f"Selected: {file_path}")
+        self.player_label.setText(os.path.basename(file_path))
         self.player.setSource(QUrl.fromLocalFile(file_path))
         self.player.play()
 
@@ -425,16 +445,61 @@ class MainWindow(QMainWindow):
             print(f"Moved directory: {file_path} -> {target_path}")
             
             # 4. Auto-advance to "next" file
-            # Since the current file is gone, the file that was below it is now at 'current_row'.
-            # We need to wait slightly for the filesystem watcher to update the model?
-            # QFileSystemModel is async. Let's try re-selecting after a short delay or just accept it might deselect.
-            # A robust way is complicated with QFileSystemModel. 
-            # For now, let's just clear selection so user knows to pick next, 
-            # or better users often click manually.
-            pass
+            self.play_next_video()
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to move file:\n{e}")
+
+    def unarchive_video(self):
+        # 1. Get current video in destination
+        dest_idx = self.dest_files_view.currentIndex()
+        if not dest_idx.isValid():
+            QMessageBox.information(self, "No Selection", "Please select a video in the destination panel first.")
+            return
+            
+        file_path = self.dest_files_model.filePath(dest_idx)
+        if not file_path or not os.path.exists(file_path):
+            return
+            
+        # 2. Get target source folder
+        source_folder = self.source_combo.currentText()
+        if not source_folder or not os.path.isdir(source_folder):
+            QMessageBox.warning(self, "No Source", "Please select a valid source folder.")
+            return
+            
+        # 3. Handle move
+        file_name = os.path.basename(file_path)
+        target_path = os.path.join(source_folder, file_name)
+        
+        if os.path.exists(target_path):
+            dlg = ConflictDialog(file_path, source_folder, self)
+            if dlg.exec():
+                if dlg.result_code == ConflictDialog.RENAME:
+                    target_path = os.path.join(source_folder, dlg.final_filename)
+                elif dlg.result_code == ConflictDialog.OVERWRITE:
+                    pass
+                else:
+                    return
+            else:
+                return
+
+        try:
+            self.player.stop()
+            self.player.setSource(QUrl())
+            
+            shutil.move(file_path, target_path)
+            print(f"Unarchived: {file_path} -> {target_path}")
+            
+            # 4. Auto-select in source tree
+            # QFileSystemModel is async, we may need to wait or use index()
+            new_idx = self.file_model.index(target_path)
+            if new_idx.isValid():
+                self.source_tree.setCurrentIndex(new_idx)
+                self.source_tree.scrollTo(new_idx)
+                self.on_file_selected(new_idx)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to unarchive file:\n{e}")
 
     def show_preferences(self):
         dlg = PreferencesDialog(self)

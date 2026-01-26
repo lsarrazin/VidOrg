@@ -1,3 +1,15 @@
+# User Requests - 2026-01-25
+
+1. Create a native Linux Desktop application to browse, play, and sort video files (PyQt6).
+2. Add a progression bar and seeker to the video player with time indicators.
+3. Implement persistent preferences to save source and destination root folders.
+4. Implement source panel sorting (Name, Date, Size).
+5. Add file conflict resolution (Rename, Overwrite, Cancel) when moving files.
+6. Add context menus (Rename, Delete, Info) for files in both panels.
+7. Allow creating new sub-folders in the destination panel.
+8. Refine UI: Add theater mode (double-click fullscreen) and cleanup redundant buttons (Remove -1m / +1m).
+9. Please commit recent changes to my GIT repo.
+
 # User Requests - 2026-01-26
 
 1. The sort function in the source panel only works for the first folder. Make it working with any selected folder.

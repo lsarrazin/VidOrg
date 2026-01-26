@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QLabel,
                              QPushButton, QFileDialog, QAbstractItemView, QStyle)
 from PyQt6.QtCore import Qt
 
@@ -107,3 +107,110 @@ class CustomVideoWidget(QVideoWidget):
     def mouseDoubleClickEvent(self, event):
         self.doubleClicked.emit()
         event.accept()
+
+class VolumePopup(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Container to give a background and border
+        self.container = QWidget()
+        self.container.setObjectName("VolumeContainer")
+        self.container.setStyleSheet("""
+            #VolumeContainer {
+                background-color: rgba(45, 45, 45, 230);
+                border: 1px solid #555;
+                border-radius: 8px;
+            }
+        """)
+        container_layout = QVBoxLayout(self.container)
+        
+        self.slider = ClickableSlider(Qt.Orientation.Vertical)
+        self.slider.setRange(0, 100)
+        self.slider.setFixedHeight(150)
+        container_layout.addWidget(self.slider)
+        
+        layout.addWidget(self.container)
+        self.setFixedSize(40, 180)
+
+class VolumeButton(QPushButton):
+    volumeChanged = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(30, 30)
+        self.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
+        self.setToolTip("Volume")
+        
+        self.popup = VolumePopup(self)
+        self.popup.slider.valueChanged.connect(self.on_volume_changed)
+        self.clicked.connect(self.toggle_popup)
+
+    def on_volume_changed(self, value):
+        # Update icon based on volume level
+        if value == 0:
+            self.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted))
+        else:
+            self.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
+        self.volumeChanged.emit(value)
+
+    def toggle_popup(self):
+        if self.popup.isVisible():
+            self.popup.hide()
+        else:
+            # Position the popup above the button
+            btn_pos = self.mapToGlobal(self.rect().bottomLeft())
+            popup_height = self.popup.height()
+            # Try to center it horizontally relative to the button
+            x = btn_pos.x() + (self.width() - self.popup.width()) // 2
+            y = btn_pos.y() - self.height() - popup_height - 5
+            self.popup.move(x, y)
+            self.popup.show()
+
+    def setVolume(self, value):
+        self.popup.slider.setValue(value)
+
+from PyQt6.QtWidgets import QDialog, QProgressBar
+from PyQt6.QtCore import QThread, pyqtSignal
+import shutil
+
+class WaitDialog(QDialog):
+    def __init__(self, message="Moving file...", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Please Wait")
+        self.setModal(True)
+        self.setFixedSize(300, 100)
+        
+        # Remove close button
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+        
+        layout = QVBoxLayout(self)
+        
+        # Message label
+        self.label = QLabel(message)
+        layout.addWidget(self.label)
+        
+        # Progress bar (indeterminate)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)  # Indeterminate mode
+        layout.addWidget(self.progress)
+
+class FileMoveWorker(QThread):
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    
+    def __init__(self, src, dst):
+        super().__init__()
+        self.src = src
+        self.dst = dst
+    
+    def run(self):
+        try:
+            shutil.move(self.src, self.dst)
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))

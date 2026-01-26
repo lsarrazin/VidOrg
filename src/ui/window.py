@@ -10,8 +10,9 @@ import shutil
 import shutil
 import os
 from src.ui.preferences import PreferencesDialog
-from src.ui.widgets import CustomVideoWidget, ClickableSlider
+from src.ui.widgets import CustomVideoWidget, ClickableSlider, VolumeButton, WaitDialog, FileMoveWorker
 from src.ui.conflicts import ConflictDialog
+from src.ui.rename_dialog import RenameDialog
 from src.core.video_utils import VideoUtils
 
 class MainWindow(QMainWindow):
@@ -152,13 +153,17 @@ class MainWindow(QMainWindow):
         
         # Previous
         self.btn_prev = QPushButton()
+        self.btn_prev.setFixedSize(30, 30)
         self.btn_prev.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaSkipBackward))
         self.btn_prev.setToolTip("Previous Video")
         self.btn_prev.clicked.connect(self.play_previous_video)
         controls_layout.addWidget(self.btn_prev)
         
+        controls_layout.addSpacing(10)
+
         # Play/Pause
         self.btn_play = QPushButton()
+        self.btn_play.setFixedSize(30, 30)
         self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.btn_play.setToolTip("Play/Pause")
         self.btn_play.clicked.connect(self.toggle_playback)
@@ -166,28 +171,28 @@ class MainWindow(QMainWindow):
         
         # Stop
         self.btn_stop = QPushButton()
+        self.btn_stop.setFixedSize(30, 30)
         self.btn_stop.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop))
         self.btn_stop.setToolTip("Stop")
         self.btn_stop.clicked.connect(self.stop_video)
         controls_layout.addWidget(self.btn_stop)
         
+        # Volume (To the right of Next)
+        self.btn_volume = VolumeButton()
+        self.btn_volume.setFixedSize(30, 30)
+        self.btn_volume.volumeChanged.connect(self.set_volume)
+        # We'll set the volume after the audio output is initialized below
+        controls_layout.addWidget(self.btn_volume)
+
+        controls_layout.addSpacing(10)
+
         # Next
         self.btn_next = QPushButton()
+        self.btn_next.setFixedSize(30, 30)
         self.btn_next.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaSkipForward))
         self.btn_next.setToolTip("Next Video")
         self.btn_next.clicked.connect(self.play_next_video)
         controls_layout.addWidget(self.btn_next)
-        
-        # Volume (Grouped with playback controls)
-        controls_layout.addSpacing(10)
-        self.vol_label = QLabel("Vol:")
-        controls_layout.addWidget(self.vol_label)
-        self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(100)
-        self.volume_slider.setFixedWidth(80)
-        self.volume_slider.valueChanged.connect(self.set_volume)
-        controls_layout.addWidget(self.volume_slider)
         
         # Centering stretch
         controls_layout.addStretch()
@@ -197,11 +202,14 @@ class MainWindow(QMainWindow):
         self.btn_move.clicked.connect(self.move_current_video)
         controls_layout.addWidget(self.btn_move)
         
-        # Media Player
+        # Media Player (Initialize BEFORE setting volume)
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
         self.player.setVideoOutput(self.video_widget)
+        
+        # Now safe to set volume
+        self.btn_volume.setVolume(100)
         
         # Signals for seeker
         self.player.positionChanged.connect(self.update_position)
@@ -433,22 +441,33 @@ class MainWindow(QMainWindow):
             else:
                 return
 
-        # Save current position to restore selection (which effectively selects 'next' as items shift up)
-        current_row = source_idx.row()
-        parent_idx = source_idx.parent()
+        # Stop playback and release file
+        self.player.stop()
+        self.player.setSource(QUrl())
         
-        try:
-            self.player.stop() # Release file lock if any
-            self.player.setSource(QUrl())
-            
-            shutil.move(file_path, target_path)
-            print(f"Moved directory: {file_path} -> {target_path}")
-            
-            # 4. Auto-advance to "next" file
-            self.play_next_video()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to move file:\n{e}")
+        # Show wait dialog
+        wait_dialog = WaitDialog(f"Moving {file_name}...", self)
+        
+        # Create worker thread
+        self.move_worker = FileMoveWorker(file_path, target_path)
+        
+        # Connect signals
+        self.move_worker.finished.connect(lambda: self.on_move_finished(wait_dialog, file_path, target_path))
+        self.move_worker.error.connect(lambda err: self.on_move_error(wait_dialog, err))
+        
+        # Start move operation
+        self.move_worker.start()
+        wait_dialog.exec()
+    
+    def on_move_finished(self, dialog, src, dst):
+        dialog.accept()
+        print(f"Moved directory: {src} -> {dst}")
+        # Auto-advance to "next" file
+        self.play_next_video()
+    
+    def on_move_error(self, dialog, error):
+        dialog.reject()
+        QMessageBox.critical(self, "Error", f"Failed to move file:\n{error}")
 
     def unarchive_video(self):
         # 1. Get current video in destination
@@ -483,23 +502,37 @@ class MainWindow(QMainWindow):
             else:
                 return
 
-        try:
-            self.player.stop()
-            self.player.setSource(QUrl())
-            
-            shutil.move(file_path, target_path)
-            print(f"Unarchived: {file_path} -> {target_path}")
-            
-            # 4. Auto-select in source tree
-            # QFileSystemModel is async, we may need to wait or use index()
-            new_idx = self.file_model.index(target_path)
-            if new_idx.isValid():
-                self.source_tree.setCurrentIndex(new_idx)
-                self.source_tree.scrollTo(new_idx)
-                self.on_file_selected(new_idx)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to unarchive file:\n{e}")
+        # Stop playback and release file
+        self.player.stop()
+        self.player.setSource(QUrl())
+        
+        # Show wait dialog
+        wait_dialog = WaitDialog(f"Unarchiving {file_name}...", self)
+        
+        # Create worker thread
+        self.unarchive_worker = FileMoveWorker(file_path, target_path)
+        
+        # Connect signals
+        self.unarchive_worker.finished.connect(lambda: self.on_unarchive_finished(wait_dialog, target_path))
+        self.unarchive_worker.error.connect(lambda err: self.on_unarchive_error(wait_dialog, err))
+        
+        # Start move operation
+        self.unarchive_worker.start()
+        wait_dialog.exec()
+    
+    def on_unarchive_finished(self, dialog, target_path):
+        dialog.accept()
+        print(f"Unarchived to: {target_path}")
+        # Auto-select in source tree
+        new_idx = self.file_model.index(target_path)
+        if new_idx.isValid():
+            self.source_tree.setCurrentIndex(new_idx)
+            self.source_tree.scrollTo(new_idx)
+            self.on_file_selected(new_idx)
+    
+    def on_unarchive_error(self, dialog, error):
+        dialog.reject()
+        QMessageBox.critical(self, "Error", f"Failed to unarchive file:\n{error}")
 
     def show_preferences(self):
         dlg = PreferencesDialog(self)
@@ -569,6 +602,10 @@ class MainWindow(QMainWindow):
 
     def set_volume(self, value):
         self.audio_output.setVolume(value / 100.0)
+        if hasattr(self, 'btn_volume'):
+            self.btn_volume.blockSignals(True)
+            self.btn_volume.setVolume(value)
+            self.btn_volume.blockSignals(False)
 
     def resolve_next_index(self, step=1):
         """Helper to find the next/prev index based on current selection."""
@@ -643,13 +680,25 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Video Information", text)
 
     def file_rename(self, path):
-        old_name = os.path.basename(path)
-        new_name, ok = QInputDialog.getText(self, "Rename File", "New filename:", QLineEdit.EchoMode.Normal, old_name)
-        
-        if ok and new_name and new_name != old_name:
-            new_path = os.path.join(os.path.dirname(path), new_name)
+        dlg = RenameDialog(path, self)
+        if dlg.exec():
+            new_filename = dlg.get_new_filename()
+            new_path = os.path.join(os.path.dirname(path), new_filename)
             try:
+                # Stop playback if this is the currently playing file
+                current_source = self.player.source().toLocalFile()
+                if current_source == path:
+                    self.player.stop()
+                    self.player.setSource(QUrl())
+                
                 os.rename(path, new_path)
+                
+                # If it was playing, start playing the renamed file
+                if current_source == path:
+                    self.player.setSource(QUrl.fromLocalFile(new_path))
+                    self.player.play()
+                    self.player_label.setText(new_filename)
+                    
             except Exception as e:
                 QMessageBox.critical(self, "Rename Error", str(e))
 

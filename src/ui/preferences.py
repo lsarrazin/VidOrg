@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QDialogButtonBox)
 from PyQt6.QtCore import QSettings
 from src.ui.widgets import PathListWidget
+from src.ui.pattern_widget import PatternWidget
 
 class PreferencesDialog(QDialog):
     def __init__(self, parent=None):
@@ -24,6 +25,11 @@ class PreferencesDialog(QDialog):
         self.dest_list = PathListWidget()
         self.tabs.addTab(self.dest_list, "Destination Folders")
         
+        # Rename Patterns Tab
+        self.pattern_widget = PatternWidget()
+        self.tabs.addTab(self.pattern_widget, "Rename Patterns")
+
+        
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -46,4 +52,5 @@ class PreferencesDialog(QDialog):
         # Save on OK
         self.settings.setValue("source_folders", self.source_list.get_paths())
         self.settings.setValue("dest_folders", self.dest_list.get_paths())
+        self.pattern_widget.save_patterns()
         super().accept()

@@ -89,7 +89,7 @@ class MainWindow(QMainWindow):
         # File System Model
         self.file_model = QFileSystemModel()
         self.file_model.setRootPath(QDir.homePath())
-        self.file_model.setNameFilters(["*.mp4", "*.mkv", "*.avi", "*.mov"])
+        self.file_model.setNameFilters(["*.mp4", "*.mkv", "*.m4v", "*.avi", "*.mov"])
         self.file_model.setNameFilterDisables(False)
         
         self.source_tree = QTreeView()
